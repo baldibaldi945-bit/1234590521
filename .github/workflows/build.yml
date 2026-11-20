@@ -1,0 +1,99 @@
+
+name: Build APK
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+
+      - name: Unzip project
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mapfile -t ZIPS < <(
+            find . -maxdepth 3 -type f -iname '*.zip' \
+              -not -path './.git/*' | sort
+          )
+
+          if [ "${#ZIPS[@]}" -ne 1 ]; then
+            echo "Expected exactly one project ZIP."
+            printf '%s\n' "${ZIPS[@]}"
+            exit 1
+          fi
+
+          mkdir -p "$RUNNER_TEMP/project"
+          unzip -q "${ZIPS[0]}" -d "$RUNNER_TEMP/project"
+
+          ROOT=$(find "$RUNNER_TEMP/project" \
+            -type f -name gradlew -printf '%h\n' | head -n 1)
+
+          if [ -z "$ROOT" ]; then
+            ROOT=$(find "$RUNNER_TEMP/project" \
+              -type f \( -name settings.gradle \
+              -o -name settings.gradle.kts \) \
+              -printf '%h\n' | head -n 1)
+          fi
+
+          if [ -z "$ROOT" ]; then
+            echo "Android Gradle project not found."
+            exit 1
+          fi
+
+          echo "PROJECT_DIR=$ROOT" >> "$GITHUB_ENV"
+
+      - name: Install web dependencies
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          if [ -f package.json ]; then
+            if [ -f package-lock.json ]; then
+              npm ci
+            else
+              npm install
+            fi
+            npm run build --if-present
+          fi
+
+      - name: Build APK
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          if [ -f gradlew ]; then
+            chmod +x gradlew
+            ./gradlew assembleRelease --no-daemon
+          else
+            gradle assembleRelease --no-daemon
+          fi
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Sprunki-Retake-Human-apk
+          path: '**/build/outputs/apk/release/*.apk'
+          if-no-files-found: error
+          retention-days: 7
