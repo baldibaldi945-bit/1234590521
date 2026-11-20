@@ -80,6 +80,58 @@ jobs:
             npm run build --if-present
           fi
 
+      - name: Disable R8 and Resource Shrinking
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import pathlib
+          import re
+
+          files = [
+              pathlib.Path("app/build.gradle"),
+              pathlib.Path("app/build.gradle.kts")
+          ]
+
+          found = False
+
+          for p in files:
+              if not p.exists():
+                  continue
+
+              found = True
+              s = p.read_text(encoding="utf-8")
+
+              s = re.sub(
+                  r'(\bisMinifyEnabled\s*=\s*)true\b',
+                  r'\1false', s
+              )
+
+              s = re.sub(
+                  r'(\bminifyEnabled\s+)true\b',
+                  r'\1false', s
+              )
+
+              s = re.sub(
+                  r'(\bisShrinkResources\s*=\s*)true\b',
+                  r'\1false', s
+              )
+
+              s = re.sub(
+                  r'(\bshrinkResources\s+)true\b',
+                  r'\1false', s
+              )
+
+              p.write_text(s, encoding="utf-8")
+              print(f"Updated: {p}")
+
+          if not found:
+              raise SystemExit("ERROR: app Gradle file not found!")
+
+          print("R8 patch completed.")
+
+          PY
+
       - name: Build APK
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
@@ -93,7 +145,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Sprunki-Retake-Human-apk
+          name: PortYouStudio-APK
           path: '**/build/outputs/apk/release/*.apk'
           if-no-files-found: error
           retention-days: 7
