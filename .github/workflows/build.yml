@@ -67,10 +67,14 @@ jobs:
           fi
 
           echo "PROJECT_DIR=$ROOT" >> "$GITHUB_ENV"
+          echo "Project found: $ROOT"
 
       - name: Install web dependencies
         working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
         run: |
+          set -e
+
           if [ -f package.json ]; then
             if [ -f package-lock.json ]; then
               npm ci
@@ -106,17 +110,14 @@ jobs:
                   r'(\bisMinifyEnabled\s*=\s*)true\b',
                   r'\1false', s
               )
-
               s = re.sub(
                   r'(\bminifyEnabled\s+)true\b',
                   r'\1false', s
               )
-
               s = re.sub(
                   r'(\bisShrinkResources\s*=\s*)true\b',
                   r'\1false', s
               )
-
               s = re.sub(
                   r'(\bshrinkResources\s+)true\b',
                   r'\1false', s
@@ -129,12 +130,14 @@ jobs:
               raise SystemExit("ERROR: app Gradle file not found!")
 
           print("R8 patch completed.")
-
           PY
 
       - name: Build APK
         working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
         run: |
+          set -e
+
           if [ -f gradlew ]; then
             chmod +x gradlew
             ./gradlew assembleRelease --no-daemon
@@ -142,10 +145,56 @@ jobs:
             gradle assembleRelease --no-daemon
           fi
 
+      - name: Collect Release APK
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          DEST="$GITHUB_WORKSPACE/dist"
+          mkdir -p "$DEST"
+
+          mapfile -t APKS < <(
+            find "$PROJECT_DIR" -type f \
+              -path '*/build/outputs/apk/*' \
+              -name '*.apk' | sort
+          )
+
+          COUNT=0
+
+          for APK in "${APKS[@]}"; do
+            case "$APK" in
+              */release/*.apk)
+                COUNT=$((COUNT + 1))
+
+                NAME=$(basename "$APK")
+                TARGET="$DEST/$NAME"
+
+                if [ -e "$TARGET" ]; then
+                  TARGET="$DEST/$COUNT-$NAME"
+                fi
+
+                cp "$APK" "$TARGET"
+                echo "Collected: $TARGET"
+                ;;
+            esac
+          done
+
+          if [ "$COUNT" -eq 0 ]; then
+            echo "No release APK was found!"
+            echo "Available build outputs:"
+            find "$PROJECT_DIR" -type f \
+              -path '*/build/outputs/*' -print
+            exit 1
+          fi
+
+          echo "Successfully collected $COUNT APK file(s)."
+          ls -lh "$DEST"
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: PortYouStudio-APK
-          path: '**/build/outputs/apk/release/*.apk'
+          path: dist/*.apk
           if-no-files-found: error
           retention-days: 7
